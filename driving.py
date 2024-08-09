@@ -27,9 +27,9 @@ Height = 480
 Offset = 300 #offset_y
 Gap = 100 #wide_y
 iteration = 1000
-wide_x = 520
-wide_y = 100 
-offset_x = 60
+wide_x = Width
+wide_y = 30
+offset_x = 0
 offset_y = 300
 
 cam = False
@@ -75,18 +75,18 @@ def draw_rectangle(img, lpos, rpos, offset=0):
     center = (lpos + rpos) / 2
     center = int(center)
 
-    cv2.rectangle(img, (lpos - 2, 7 + offset),
-                       (lpos + 2, 12 + offset),
-                       (0, 0, 0), 2)
-    cv2.rectangle(img, (rpos - 2, 7 + offset),
-                       (rpos + 2, 12 + offset),
-                       (255, 0, 0), 2)
-    cv2.rectangle(img, (center-2, 7 + offset),
-                       (center+2, 12 + offset),
-                       (0, 255, 0), 2)    
-    cv2.rectangle(img, (157, 7 + offset),
-                       (162, 12 + offset),
-                       (0, 0, 255), 2)
+    # cv2.rectangle(img, (lpos - 2, 7 + offset),
+    #                    (lpos + 2, 12 + offset),
+    #                    (0, 0, 0), 2)
+    # cv2.rectangle(img, (rpos - 2, 7 + offset),
+    #                    (rpos + 2, 12 + offset),
+    #                    (255, 0, 0), 2)
+    # cv2.rectangle(img, (center-2, 7 + offset),
+    #                    (center+2, 12 + offset),
+    #                    (0, 255, 0), 2)    
+    # cv2.rectangle(img, (157, 7 + offset),
+    #                    (162, 12 + offset),
+    #                    (0, 0, 255), 2)
     return img
 
 # left lines, right lines
@@ -165,7 +165,7 @@ def get_line_pos(img, lines, left=False, right=False):
         elif right:
             pos = Width
     else:
-        y = Gap/2
+        y = wide_y/2
 
         pos = (y - b) / m
         
@@ -173,11 +173,12 @@ def get_line_pos(img, lines, left=False, right=False):
         
 
         if cam_debug:
-            b += Offset
+            b += offset_y
             xs = (Height - b) / float(m)
             xe = ((Height/2) - b) / float(m)
+            
 
-            cv2.line(img, (int(xs), int(Height)), (int(xe), int(Height/2)), (255, 0,0), 3)
+            cv2.line(img, (int(xs)+offset_x, int(Height)), (int(xe)+offset_x, int(Height/2)), (255, 0,0), 3)
 
     return img, int(pos)
 
@@ -227,8 +228,8 @@ def process_image(frame):
     
 
     # canny edge
-    low_threshold = 170
-    high_threshold = 200
+    low_threshold = 60
+    high_threshold = 70
     edge_img = cv2.Canny(np.uint8(blur_gray), low_threshold, high_threshold, kernel_size)
     print(iteration)
     # file_path = '/home/pi/xycar_ws/src/driving/src/pic/{}.png'.format(iteration)
@@ -237,7 +238,7 @@ def process_image(frame):
 
     # HoughLinesP
     #all_lines = cv2.HoughLinesP(edge_img, 0.7, math.pi/180, 8, 28, 2)
-    all_lines = cv2.HoughLinesP(edge_img, 1 , math.pi/180, 30, 30, 2)
+    all_lines = cv2.HoughLinesP(edge_img, 1 , math.pi/180, 5, 30, 2)
     # cv2.imshow("gray",gray)
     # cv2.imshow("roi ",roi)
     # cv2.imshow("Blurred Gray ",blur_gray)
@@ -263,7 +264,7 @@ def process_image(frame):
 
         # draw rectangle
         frame = draw_rectangle(frame, lpos, rpos, offset=Offset)
-        frame = cv2.rectangle(frame, (0, Offset), (int(Width), Offset+Gap), (255, 202, 204), 2)
+        frame = cv2.rectangle(frame, (offset_x+wide_x, offset_y), (offset_x, offset_y+wide_y), (255, 202, 204), 2)
     
     img = frame        
     return lpos, rpos, len(all_lines), True
@@ -297,7 +298,10 @@ def draw_steer(steer_angle):
     file_path = '/home/pi/xycar_ws/src/driving/src/pic/{}.png'.format(iteration)
     iteration+=1
     cv2.imwrite(file_path,img)
-    # cv2.waitKey(0)
+    cv2.waitKey(0)
+
+
+    
     
 
 def pid_angle(ITerm, error, b_angle, b_error, Cnt):
@@ -346,9 +350,10 @@ def start():
     b_error = 0
     ITerm = 0
     Cnt = 0
+    speed = 15
     avoid_time = time.time() + 3.8
     turn_right = time.time()
-    stop_time = time.time() + 100000.5
+    stop_time = time.time() + 1000000.5
 
     if cam_record:
         fourcc = cv2.VideoWriter_fourcc(*'DIVX')
@@ -356,9 +361,14 @@ def start():
         out = cv2.VideoWriter(os.path.join(path, 'test.avi'), fourcc, 25.0, (Width,Height))
     print("cam_recode ={}".format(cam_record))
     drive(0,0)
+    
+    error = 0
+    p_angle = 0
     while not rospy.is_shutdown():
+        
         # while not image.size == (Width*Height*3):
         #     continue
+        
         
         f_n += 1
         if (time.time() - t_check) > 1:
@@ -393,19 +403,39 @@ def start():
         #     print("curve")
 
         
+        
         # if(lpos == 0):
         #     print("lpos error")
-        #     lpos=rpos-300
-        # if(rpos > lpos+500):
+        #     lpos = rpos - 350
+        #     if lpos < 0:
+        #         lpos = 0
+        # if(rpos > lpos+350):
         #     print("rpos error")
-        #     rpos=lpos+300
+        #     rpos=lpos+280
+        speed = 15
+   
 
-        center = (lpos + rpos) / 2
-        
-        print(lpos, rpos, center, diff)
-        # angle = -(Width/2 - center)
-        error = (center - 520/2)
-        angle, ITerm = pid_angle(ITerm, error, b_angle, b_error, Cnt)
+
+        if int(lpos) == 0 and int(rpos) >= Width:
+            angle =p_angle
+        elif rpos > 500:
+            angle = p_angle
+        else:
+            
+            if center >= 300 and center <= 360 :
+                angle = 0
+            else:
+                if lpos == 0:
+                    lpos = rpos - 130 
+                center = (lpos + rpos) / 2
+            
+                cv2.putText(img,'lpos={} rpos={} center={}'.format(lpos,rpos,center),(50,50),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
+                # angle = -(Width/2 - center)
+                error = (center - wide_x/2)
+                angle, ITerm = pid_angle(ITerm, error, b_angle, b_error, Cnt)
+                p_angle = angle
+                print(lpos, rpos, center, diff)
+
 
 #        if lpos == 0 and rpos == 320:
 #            angle = 70
@@ -414,12 +444,17 @@ def start():
         steer_angle = angle * 0.4
         draw_steer(steer_angle)
         print("angle :{}".format(angle))
-        drive(angle, 15)
+        if angle >= 10 or angle <= -10:
+            speed = 15
+        else:
+            speed = 15
+        drive(angle, speed)
             
         cv2.waitKey(1)
         #sq.sleep()
         b_angle =angle
         b_error = error
+
 
 if __name__ == '__main__':
     start()
