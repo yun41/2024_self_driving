@@ -28,9 +28,9 @@ Height = 480
 Offset = 250 #offset_y
 Gap = 100 #wide_y
 iteration = 1000
-wide_x = Width-160
+wide_x = Width-180
 wide_y = 30
-offset_x = 80
+offset_x = 90
 offset_y = 300
 
 
@@ -96,7 +96,7 @@ def divide_left_right(lines):
     global Width
 
     low_slope_threshold = 0
-    high_slope_threshold = 20
+    high_slope_threshold = 10
 
     # calculate slope & filtering with threshold
     slopes = []
@@ -116,6 +116,7 @@ def divide_left_right(lines):
         if low_slope_threshold < abs(slope) < high_slope_threshold:
             slopes.append(slope)
             new_lines.append(line[0])
+    # print(slopes)
 
     # divide lines left to right
     left_lines = []
@@ -247,7 +248,7 @@ def process_image(frame):
     
     all_lines = cv2.HoughLinesP(edge_img, 1 , math.pi/180, 1, minLineLength=5,maxLineGap=2)
     # all_lines = cv2.HoughLinesP(edge_img, 1 , math.pi/180, 30, 30, 7)
-    
+    # print(len(all_lines))
 
     # cv2.imshow("gray",gray)
     # cv2.imshow("roi ",roi)
@@ -350,7 +351,7 @@ def start():
     start_time = 0
     end_time = 0
     end_time = 0
-    cam_record = True
+    cam_record = False
     print("hello")
     rospy.init_node('auto_drive')
     motor = rospy.Publisher('xycar_motor', xycar_motor, queue_size=1)
@@ -374,6 +375,7 @@ def start():
     road_width = 0
     avoid_time = time.time() + 3.8
     turn_right = time.time()
+    start_time = time.time()
     stop_time = time.time() + 1000000.5
 
     if cam_record:
@@ -426,11 +428,18 @@ def start():
     
         speed = 15
    
-
+        if (len_all_lines > 30):
+            if time.time() -start_time > 10000:
+                start_time = time.time()
+            angle = 0
+            speed = 25                
+            
         center = (lpos+rpos)/2
+        speed = 20
 
         if wide_x/2 - 10 < center <wide_x/2+10:
             angle = 0
+            speed = 25
         if lpos == 0 and rpos > wide_x*0.8 :
             angle = -65
         elif rpos < wide_x*0.6:
@@ -444,8 +453,8 @@ def start():
             
    
         cv2.putText(img,'lpos={} rpos={} center={} angle={}'.format(lpos,rpos,center,angle),(50,50),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
-        steer_angle = angle * 0.4
-        draw_steer(steer_angle)
+        # steer_angle = angle * 0.4
+        # draw_steer(steer_angle)
         # print("angle :{}".format(angle))
         # if angle >= 10 or angle <= -10:
         #     speed = 15
