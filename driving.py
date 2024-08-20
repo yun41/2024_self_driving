@@ -10,6 +10,9 @@ from math import *
 import signal
 import sys
 import os
+import time
+import asyncio
+from std_msgs.msg import Int32MultiArray
 
 def signal_handler(sig, frame):
     import time
@@ -24,19 +27,24 @@ bridge = CvBridge()
 motor = None
 Width = 640
 Height = 480
-Offset = 300 #offset_y
+Offset = 250 #offset_y
 Gap = 100 #wide_y
 iteration = 1000
-wide_x = Width
+wide_x = Width-180
 wide_y = 30
-offset_x = 0
+offset_x = 90
 offset_y = 300
+ultra_msg = [100 for i in range(8)]
+
 
 cam = False
 cam_debug = True
 
 sub_f = 0
 time_c = 0
+
+async def print_angle(angle ):
+    print(angle)
 
 def img_callback(data):
     global image   
@@ -49,6 +57,10 @@ def img_callback(data):
         sub_f = 0
 
     image = bridge.imgmsg_to_cv2(data, "bgr8")
+
+def ultra_callback(data) :
+    global ultra_msg
+    ultra_msg = data.data
 
 # publish xycar_motor msg
 def drive(Angle, Speed): 
@@ -94,11 +106,12 @@ def divide_left_right(lines):
     global Width
 
     low_slope_threshold = 0
-    high_slope_threshold = 20
+    high_slope_threshold = 10
 
     # calculate slope & filtering with threshold
     slopes = []
     new_lines = []
+    # print(slopes)
 
     for line in lines:
         x1, y1, x2, y2 = line[0]
@@ -107,16 +120,23 @@ def divide_left_right(lines):
             slope = 0
         else:
             slope = float(y2-y1) / float(x2-x1)
+        # print(slope)
+        # print(line[0])
         
         if low_slope_threshold < abs(slope) < high_slope_threshold:
             slopes.append(slope)
             new_lines.append(line[0])
+    # print(slopes)
 
     # divide lines left to right
     left_lines = []
     right_lines = []
+    horizental_line = False
+    horizental_count = 0 
+    
     th = -10
-
+    # print(slopes)
+    # print(len(slopes))
     for j in range(len(slopes)):
         Line = new_lines[j]
         slope = slopes[j]
@@ -127,8 +147,14 @@ def divide_left_right(lines):
             left_lines.append([Line.tolist()])
         elif (slope > 0) and (x1 > Width/2 + th):
             right_lines.append([Line.tolist()])
+        if -0.1 <= slope <= 0.1:
+            # print(slopes)
+            horizental_count+= 1
+        
+    if horizental_count >= 3 :
+        horizental_line = True
 
-    return left_lines, right_lines
+    return left_lines, right_lines, horizental_line
 
 # get average m, b of line, sum of x, y, mget lpos, rpos
 def get_line_pos(img, lines, left=False, right=False):
@@ -169,7 +195,7 @@ def get_line_pos(img, lines, left=False, right=False):
 
         pos = (y - b) / m
         
-        print("b= {}, m={} pos={}".format(b,m,pos))
+        # print("b= {}, m={} pos={}".format(b,m,pos))
         
 
         if cam_debug:
@@ -228,29 +254,39 @@ def process_image(frame):
     
 
     # canny edge
-    low_threshold = 60
-    high_threshold = 70
+    low_threshold = 170
+    high_threshold = 220
     edge_img = cv2.Canny(np.uint8(blur_gray), low_threshold, high_threshold, kernel_size)
-    print(iteration)
+   
+    # print(iteration)
     # file_path = '/home/pi/xycar_ws/src/driving/src/pic/{}.png'.format(iteration)
     # iteration+=1
     # cv2.imwrite(file_path,edge_img)
 
     # HoughLinesP
     #all_lines = cv2.HoughLinesP(edge_img, 0.7, math.pi/180, 8, 28, 2)
-    all_lines = cv2.HoughLinesP(edge_img, 1 , math.pi/180, 5, 30, 2)
+    
+    all_lines = cv2.HoughLinesP(edge_img, 1 , math.pi/180, 1, minLineLength=5,maxLineGap=2)
+    # all_lines = cv2.HoughLinesP(edge_img, 1 , math.pi/180, 30, 30, 7)
+    # print(len(all_lines))
+
     # cv2.imshow("gray",gray)
     # cv2.imshow("roi ",roi)
     # cv2.imshow("Blurred Gray ",blur_gray)
-    # cv2.imshow('Edge image',edge_img)
-    # cv2.waitKey(0)
+    # cv2.imshow("edge image",edge_img)
+    
     if cam:
         cv2.imshow('calibration', frame)
     # divide left, right lines
     if all_lines is None:
         return (Width)/2, (Width)/2, False
-    left_lines, right_lines = divide_left_right(all_lines)
-    # print("left : {}, right :{}".format(len(left_lines),len(right_lines)))
+    # print(len(all_lines))
+    left_lines, right_lines,horizental_line = divide_left_right(all_lines)
+    
+    # frame = draw_lines(frame,all_lines)
+    # cv2.imshow('frame', frame)
+    
+    # cv2.waitKey(0)
 
     # get center of lines
     frame, lpos = get_line_pos(frame, left_lines, left=True)
@@ -267,7 +303,8 @@ def process_image(frame):
         frame = cv2.rectangle(frame, (offset_x+wide_x, offset_y), (offset_x, offset_y+wide_y), (255, 202, 204), 2)
     
     img = frame        
-    return lpos, rpos, len(all_lines), True
+    # cv2.waitKey(0)
+    return lpos, rpos, len(all_lines), horizental_line
 
 def draw_steer(steer_angle):
     global Width, Height, img, iteration
@@ -297,8 +334,10 @@ def draw_steer(steer_angle):
     cv2.imshow('steer', img)
     file_path = '/home/pi/xycar_ws/src/driving/src/pic/{}.png'.format(iteration)
     iteration+=1
-    cv2.imwrite(file_path,img)
+    # print(ultra_msg)
+    # cv2.imwrite(file_path,img)
     cv2.waitKey(0)
+
 
 
     
@@ -330,12 +369,19 @@ def start():
     global motor
     global image
     global Width, Height
+    start_time = 0
+    end_time = 0
+    end_time = 0
     cam_record = False
     print("hello")
     rospy.init_node('auto_drive')
     motor = rospy.Publisher('xycar_motor', xycar_motor, queue_size=1)
+    
 
     image_sub = rospy.Subscriber("/usb_cam/image_raw/",Image,img_callback)
+    ultra_sub = rospy.Subscriber("xycar_ultrasonic",Int32MultiArray,ultra_callback)
+
+    # rospy.wait_for_message("xycar_ultrasonic",Int32MultiArray)
     print("---------- Xycar C1 HD v1.0 ----------")
     time.sleep(3)
 
@@ -350,110 +396,174 @@ def start():
     b_error = 0
     ITerm = 0
     Cnt = 0
-    speed = 15
+    speed = 20
+    road_width = 0
+    center = 0
     avoid_time = time.time() + 3.8
     turn_right = time.time()
+    start_time = time.time()
     stop_time = time.time() + 1000000.5
+    DRIVE_MODE = "BASIC"
+    startlineStart = 0
+    horizental_line = False
+    angle = 0
+    len_all_lines = 0
+    passStart = 0
 
     if cam_record:
         fourcc = cv2.VideoWriter_fourcc(*'DIVX')
-        path = '/home/pi/xycar_ws/src/base/cam_record'
+        path = '/home/pi/xycar_ws/src'
         out = cv2.VideoWriter(os.path.join(path, 'test.avi'), fourcc, 25.0, (Width,Height))
     print("cam_recode ={}".format(cam_record))
     drive(0,0)
     
     error = 0
     p_angle = 0
+    
     while not rospy.is_shutdown():
         
         # while not image.size == (Width*Height*3):
         #     continue
         
-        
+        rospy.wait_for_message("xycar_ultrasonic",Int32MultiArray)
         f_n += 1
         if (time.time() - t_check) > 1:
             # print("fps : ", f_n)
             t_check = time.time()
             f_n = 0
+        end_time = time.time()
+        # print(end_time-start_time)
         if cam_record:
             out.write(image)
         draw_img = image.copy()
+        start_time= time.time()
         
         try:
-            lpos, rpos, len_all_lines, go = process_image(draw_img)
+            lpos, rpos, len_all_lines, horizental_line = process_image(draw_img)
         except:
-            lpos, rpos, go = process_image(draw_img)
+            lpos, rpos, horizental_line = process_image(draw_img)
         #lpos, rpos, go = process_image(draw_img)
-        if time.time() > stop_time:
-            print("stop_time", stop_time)
-            line_count, flag, stop_time = stop(len_all_lines, flag, line_count, stop_time)
-            print("stop_time", stop_time)
-         #stop
-        if (line_count==2):# 라인 카운트 2개시 정지 
+        # if time.time() > stop_time:
+        #     print("stop_time", stop_time)
+        #     line_count, flag, stop_time = stop(len_all_lines, flag, line_count, stop_time)
+        #     print("stop_time", stop_time)
+        #stop
+        # print(horizental_line)
+        if line_count==2:# 라인 카운트 2개시 정지 
             drive(0,0)
             cv2.waitKey(0)
             line_count = 0
-
+        
         diff = rpos-lpos
-        # print(lpos, rpos, center, diff)
-
-        # if diff > 135 and diff < 142:
-        #     print("straight")
-        # else:
-        #     print("curve")
-
         
-        
-        # if(lpos == 0):
-        #     print("lpos error")
-        #     lpos = rpos - 350
-        #     if lpos < 0:
-        #         lpos = 0
-        # if(rpos > lpos+350):
-        #     print("rpos error")
-        #     rpos=lpos+280
-        speed = 15
+        if road_width == 0 :
+            road_width = diff
+        # print(len_all_lines)
    
-
-
-        if int(lpos) == 0 and int(rpos) >= Width:
-            angle =p_angle
-        elif rpos > 500:
-            angle = p_angle
-        else:
+        # if len_all_lines > 15 and DRIVE_MODE != "STARTLINE":
+        #     line_count += 1
+        #     DRIVE_MODE = "STARTLINE"
+        #     startlineStart = time.time()
             
-            if center >= 300 and center <= 360 :
-                angle = 0
-            else:
-                if lpos == 0:
-                    lpos = rpos - 130 
+        #     # if time.time() -start_time > 10000:
+        #     #     start_time = time.time()
+        #     angle = 0
+        #     speed = 20
+            
+        # elif DRIVE_MODE == 'STARTLINE' :
+        #     if time.time() - startlineStart > 300:
+        #         break
+        #         DRIVE_MODE = "BASIC"
+        #     angle = 0
+        #     speed = 20
+        # else:     
+        # print(ultra_msg)
+        # if ultra_msg[2] < 55:
+        #     passStart = time.time()
+        #     while time.time() - passStart < 1:
+        #         drive(60,18)
+        #     passStart = time.time()
+        #     while time.time() - passStart < 1:
+        #         drive(-60,20)
+        #     # passStart = time.time()    
+        #     # while time.time() - passStart < 0.75:
+        #     #     drive(0,15)
+        #     passStart = time.time()
+        #     while time.time() - passStart < 1:
+        #         drive(-60,22)
+        #     passStart = time.time()
+        #     while time.time() - passStart < 1:
+        #         drive(60,20)
+        #     drive(0,0)
+            
+        
+        speed = 25
+        if horizental_line and len_all_lines >= 25:
+        # if len_all_lines > 30 :
+            # print(len_all_lines)
+            print("horizental")
+            line_count += 1
+            if line_count == 2:
+                # time.sleep(2)
+                drive(-15,20)
+                break
+            startlineStart = time.time()
+            while time.time() - startlineStart < 1.5:
+                drive(0,20)
+            
+        
+        if rpos < wide_x*0.6:
+            
+            angle = -60
+        elif lpos == 0 :
+        
+            if rpos > wide_x*0.8 :
+                angle = -60
+            else:       
+                lpos = rpos - road_width 
                 center = (lpos + rpos) / 2
-            
-                cv2.putText(img,'lpos={} rpos={} center={}'.format(lpos,rpos,center),(50,50),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
-                # angle = -(Width/2 - center)
                 error = (center - wide_x/2)
                 angle, ITerm = pid_angle(ITerm, error, b_angle, b_error, Cnt)
-                p_angle = angle
-                print(lpos, rpos, center, diff)
-
-
-#        if lpos == 0 and rpos == 320:
-#            angle = 70
-#            drive(angle, 5)
-
-        steer_angle = angle * 0.4
-        draw_steer(steer_angle)
-        print("angle :{}".format(angle))
-        if angle >= 10 or angle <= -10:
-            speed = 15
         else:
-            speed = 15
+            center = (lpos + rpos) / 2
+            error = (center - wide_x/2)
+            angle, ITerm = pid_angle(ITerm, error, b_angle, b_error, Cnt)
+
+        # if wide_x/2 - 10 < center <wide_x/2+10:
+        #     angle = 0
+        #     speed = 25
+        # elif rpos < wide_x*0.6:
+            
+        #     angle = -65
+        # elif lpos == 0 :
+        
+        #     if rpos > wide_x*0.8 :
+        #         angle = -65
+        #     else:       
+        #         lpos = rpos - road_width 
+        #     center = (lpos + rpos) / 2
+        #     error = (center - wide_x/2)
+        #     angle, ITerm = pid_angle(ITerm, error, b_angle, b_error, Cnt)
+            
+
+        # cv2.putText(img,'lpos={} rpos={} center={} angle={}'.format(lpos,rpos,center,angle),(50,50),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
+        # steer_angle = angle * 0.4
+        # draw_steer(steer_angle)
+        # asyncio.run(print_angle("angle :{}".format(angle)))
+        
+        # if angle >= 10 or angle <= -10:
+        #     speed = 15
+        # else:
+        #     speed = 15
+        # print(speed)
+        
         drive(angle, speed)
             
         cv2.waitKey(1)
         #sq.sleep()
         b_angle =angle
         b_error = error
+        p_angle = angle
 
 
 if __name__ == '__main__':
