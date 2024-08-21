@@ -35,6 +35,7 @@ wide_y = 30
 offset_x = 90
 offset_y = 300
 ultra_msg = [100 for i in range(8)]
+exposure_value = 20
 
 
 cam = False
@@ -332,11 +333,12 @@ def draw_steer(steer_angle):
     img[int(Height - arrow_Height): int(Height), int(Width/2 - arrow_Width/2): int(Width/2 + arrow_Width/2)] = res
 
     cv2.imshow('steer', img)
+    global exposure_value
     file_path = '/home/pi/xycar_ws/src/driving/src/pic/{}.png'.format(iteration)
     iteration+=1
     # print(ultra_msg)
-    # cv2.imwrite(file_path,img)
-    cv2.waitKey(0)
+    cv2.imwrite(file_path,img)
+    # cv2.waitKey(0)
 
 
 
@@ -409,7 +411,9 @@ def start():
     angle = 0
     len_all_lines = 0
     passStart = 0
-
+    last_ultra_1 = 100
+    last_ultra_2 = 100
+    curve_angle = -60
     if cam_record:
         fourcc = cv2.VideoWriter_fourcc(*'DIVX')
         path = '/home/pi/xycar_ws/src'
@@ -419,13 +423,23 @@ def start():
     
     error = 0
     p_angle = 0
+    global exposure_value
+    # exposure_value = (exposure_value + 10) % 256
+    exposure_value = 77
+    cmd = 'v4l2-ctl -d /dev/videoCAM -c exposure_absolute={}'.format(exposure_value)
+    os.system(cmd)
     
     while not rospy.is_shutdown():
-        
+        # global exposure_value
+        # exposure_value = (exposure_value + 5) % 256
+        # cmd = 'v4l2-ctl -d /dev/videoCAM -c exposure_absolute={}'.format(exposure_value)
+        # os.system(cmd)
         # while not image.size == (Width*Height*3):
         #     continue
-        
+        last_ultra_1 = last_ultra_2
+        last_ultra_2 = ultra_msg[2]
         rospy.wait_for_message("xycar_ultrasonic",Int32MultiArray)
+        current_ultra = ultra_msg[2]
         f_n += 1
         if (time.time() - t_check) > 1:
             # print("fps : ", f_n)
@@ -478,23 +492,20 @@ def start():
         #     speed = 20
         # else:     
         # print(ultra_msg)
-        # if ultra_msg[2] < 55:
-        #     passStart = time.time()
-        #     while time.time() - passStart < 1:
-        #         drive(60,18)
-        #     passStart = time.time()
-        #     while time.time() - passStart < 1:
-        #         drive(-60,20)
-        #     # passStart = time.time()    
-        #     # while time.time() - passStart < 0.75:
-        #     #     drive(0,15)
-        #     passStart = time.time()
-        #     while time.time() - passStart < 1:
-        #         drive(-60,22)
-        #     passStart = time.time()
-        #     while time.time() - passStart < 1:
-        #         drive(60,20)
-        #     drive(0,0)
+
+        if current_ultra < 60:
+            if last_ultra_1 < 60 and last_ultra_2 < 60 :
+                print("obstacle {} -> {} -> {}".format(last_ultra_2, last_ultra_1, current_ultra))
+                passStart = time.time()
+                while time.time() - passStart < 0.7:
+                    drive(60,24)
+                passStart = time.time()
+                while time.time() - passStart < 1.7:
+                    drive(-60,25)
+                # passStart = time.time()
+                # while time.time() - passStart < 0.5:
+                #     drive(60,25)
+                # print(um1,um2)
             
         
         speed = 25
@@ -505,27 +516,43 @@ def start():
             line_count += 1
             if line_count == 2:
                 # time.sleep(2)
-                drive(-15,20)
+                drive(-20,18)
                 break
             startlineStart = time.time()
-            while time.time() - startlineStart < 1.5:
-                drive(0,20)
+            while time.time() - startlineStart < 1.2:
+                drive(-25,21)
             
         
         if rpos < wide_x*0.6:
             
-            angle = -60
+            angle = curve_angle
+        elif lpos > wide_x * 0.4:
+            # print("lpos = {}".format(lpos))
+            angle = curve_angle
         elif lpos == 0 :
         
             if rpos > wide_x*0.8 :
-                angle = -60
+                angle = curve_angle
             else:       
                 lpos = rpos - road_width 
-                center = (lpos + rpos) / 2
+                center = ((lpos + rpos) / 2) 
                 error = (center - wide_x/2)
                 angle, ITerm = pid_angle(ITerm, error, b_angle, b_error, Cnt)
+        elif rpos == Width :
+            # print("{} {}".format(lpos,rpos))
+            if lpos < wide_x * 0.2 :
+                angle = curve_angle 
+            else:
+                rpos = lpos + road_width
+                center = ((lpos + rpos) / 2)
+                error = (center - wide_x/2)
+                angle, ITerm = pid_angle(ITerm, error, b_angle, b_error, Cnt)
+
         else:
-            center = (lpos + rpos) / 2
+            if rpos > wide_x * 0.8:
+                rpos = lpos + road_width
+
+            center = ((lpos + rpos) / 2) 
             error = (center - wide_x/2)
             angle, ITerm = pid_angle(ITerm, error, b_angle, b_error, Cnt)
 
@@ -558,6 +585,8 @@ def start():
         # print(speed)
         
         drive(angle, speed)
+        # time.sleep(1)
+        # print("drive")
             
         cv2.waitKey(1)
         #sq.sleep()
